@@ -9,8 +9,10 @@ import org.vandeseer.easytable.settings.VerticalAlignment;
 import org.vandeseer.easytable.structure.cell.CellBaseData;
 
 import java.awt.*;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 
 @AllArgsConstructor
 @Builder(buildMethodName = "internalBuild")
@@ -28,6 +30,8 @@ public class Table {
 
     private final List<Row> rows;
     private final List<Column> columns;
+
+    private final Set<Point> rowSpanCells;
 
     @Getter
     @Setter(AccessLevel.NONE)
@@ -50,9 +54,13 @@ public class Table {
     public float getAvailableCellWidthRespectingSpan(int columnIndex, int span) {
         float cellWidth = 0;
         for (int i = 0; i < span; i++) {
-            cellWidth += getColumns().get(columnIndex + i).getWidth(); // TODO should we expand?
+            cellWidth += getColumns().get(columnIndex + i).getWidth();
         }
         return cellWidth;
+    }
+
+    public boolean isRowSpanAt(int rowIndex,int columnIndex) {
+        return rowSpanCells.contains(new Point(rowIndex, columnIndex));
     }
 
     public static class TableBuilder {
@@ -68,20 +76,59 @@ public class Table {
                                                 .wordBreak(true)
                                                 .build();
 
+        private Set<Point> rowSpanCells = new HashSet<>();
+
         private TableBuilder() {
 
         }
 
         public TableBuilder addRow(final Row row) {
-            if (row.getCells().stream().mapToInt(CellBaseData::getSpan).sum() != numberOfColumns) {
-                throw new IllegalArgumentException(
-                        "Number of row cells does not match with number of table columns");
+            final List<CellBaseData> cells = row.getCells();
+
+            // Store how many cells can or better have to be omitted in the next rows
+            // due to cells in this row that declare row spanning
+            updateRowSpanCellsSet(cells);
+
+            if (!rows.isEmpty()) {
+                rows.get(rows.size() - 1).setNext(row);
             }
             rows.add(row);
+
             return this;
         }
 
-        public TableBuilder addColumnsOfWidth(final float ...columnWidths) {
+        // This method is unfortunately a bit complex, but what it does is basically:
+        // Put every cell coordinate in the set which needs to be skipped because it is
+        // "contained" in another cell due to row spanning.
+        // The coordinates are those of the table how it would look like without any spanning.
+        private void updateRowSpanCellsSet(List<CellBaseData> cells) {
+            int currentColumn = 0;
+
+            for (CellBaseData cell : cells) {
+
+                if (cell.getRowSpan() > 1) {
+                    // First we need to skip the cells in columns where we have row spanning from rows above
+                    int skipped = 0;
+                    while (rowSpanCells.contains(new Point(rows.size(), currentColumn + skipped))) {
+                        skipped++;
+                    }
+
+                    for (int rowsToSpan = 0; rowsToSpan < cell.getRowSpan(); rowsToSpan++) {
+
+                        // Skip first row's cell, because that is a regular cell
+                        if (rowsToSpan >= 1) {
+                            for (int colSpan = 0; colSpan < cell.getColSpan(); colSpan++) {
+                                rowSpanCells.add(new Point(rows.size() + rowsToSpan, currentColumn + skipped + colSpan));
+                            }
+                        }
+                    }
+                }
+
+                currentColumn += cell.getColSpan();
+            }
+        }
+
+        public TableBuilder addColumnsOfWidth(final float... columnWidths) {
             for (float columnWidth : columnWidths) {
                 addColumnOfWidth(columnWidth);
             }
@@ -137,6 +184,11 @@ public class Table {
         }
 
         public Table build() {
+            if (getNumberOfRegularCells() != getNumberOfSpannedCells()) {
+                throw new RuntimeException("Number of table cells does not match with table setup. " +
+                        "This could be due to row or col spanning not being correct.");
+            }
+
             Table table = this.internalBuild();
 
             table.setWidth(width);
@@ -159,7 +211,7 @@ public class Table {
                     Column column = table.getColumns().get(columnNumber);
                     cell.setColumn(column);
 
-                    columnNumber += cell.getSpan();
+                    columnNumber += cell.getColSpan();
                 }
             }
 
@@ -173,6 +225,16 @@ public class Table {
             }
 
             return table;
+        }
+
+        private int getNumberOfRegularCells() {
+            return columns.size() * rows.size();
+        }
+
+        private int getNumberOfSpannedCells() {
+            return rows.stream()
+                    .flatMapToInt(row -> row.getCells().stream().mapToInt(cell -> cell.getRowSpan() * cell.getColSpan()))
+                    .sum();
         }
 
     }

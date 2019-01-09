@@ -57,137 +57,149 @@ public class TableDrawer {
     }
 
     public void draw() throws IOException {
-        drawBackgroundAndCellContent(this.startX, this.startY);
-        drawBorders(this.startX, this.startY);
+        drawWithFunction(new Point2D.Float(this.startX, this.startY), this::drawBackgroundColorAndCellContent, false);
+        drawWithFunction(new Point2D.Float(this.startX, this.startY), this::drawBorders, true);
     }
 
-    private void drawBackgroundAndCellContent(float initialX, float initialY) throws IOException {
-        float startX;
-        float startY = initialY;
+    private void drawWithFunction(Point2D.Float startingPoint, TableDrawerFunction function, boolean isLastAction) throws IOException {
+        float y = startingPoint.y;
 
         for (int i = rowToDraw; i < table.getRows().size(); i++) {
             final Row row = table.getRows().get(i);
-            final float rowHeight = row.getHeight();
             int columnCounter = 0;
 
-            startX = initialX;
-            startY -= rowHeight;
+            float x = startingPoint.x;
+            y -= row.getHeight();
 
-            if (startY < endY) {
+            if (y < endY) {
+                if (isLastAction) {
+                    rowToDraw = i;
+                }
                 return;
             }
 
-            for (final CellBaseData cell : row.getCells()) {
-                float cellWidth = table.getAvailableCellWidthRespectingSpan(columnCounter, cell.getSpan());
+            for (CellBaseData cell : row.getCells()) {
 
-                // Handle the cell's background color
-                if (cell.hasBackgroundColor()) {
-                    drawCellBackground(cell, startX, startY, cellWidth, rowHeight);
+                while (table.isRowSpanAt(i, columnCounter)) {
+                    x += table.getColumns().get(columnCounter).getWidth();
+                    columnCounter++;
                 }
 
-                // Handle the cell's text
+                float cellWidth = table.getAvailableCellWidthRespectingSpan(columnCounter, cell.getColSpan());
+
+                // This is the interesting part :)
+                function.accept(new Point2D.Float(x, y), row, cell, cellWidth);
+
+                x += cellWidth;
+                columnCounter += cell.getColSpan();
+            }
+        }
+
+        if (isLastAction) {
+            this.isFinished = true;
+        }
+    }
+
+    private void drawBackgroundColorAndCellContent(Point2D.Float start, Row row, CellBaseData cell, float cellWidth) throws IOException {
+
+        final float rowHeight = row.getHeight();
+        final float height = cell.getHeight() > rowHeight ? cell.getHeight() : rowHeight;
+        final float y = cell.getHeight() > rowHeight ? start.y + rowHeight - cell.getHeight() : start.y;
+
+        // Handle the cell's background color
+        if (cell.hasBackgroundColor()) {
+            drawCellBackground(cell, start.x, y, cellWidth, height);
+        }
+
+                // Handle the cell's content
                 if (cell instanceof CellText) {
-                    drawCellText((CellText) cell, cellWidth, startX, startY);
+                    drawCellText((CellText) cell, cellWidth, start.x, start.y);
                 } else if (cell instanceof CellImage) {
-                    drawCellImage((CellImage) cell, cellWidth, startX, startY);
+                    drawCellImage((CellImage) cell, cellWidth, start.x, y);
                 } else if (cell instanceof CellCustom) {
-                    ((CellCustom) cell).onDraw(contentStream, startX, startY);
+                    ((CellCustom) cell).onDraw(contentStream, start.x, start.y);
                 }
 
-                startX += cellWidth;
+    }
 
-                columnCounter += cell.getSpan();
+    private void drawBorders(Point2D.Float start, Row row, CellBaseData cell, float cellWidth) throws IOException {
+        final float rowHeight = row.getHeight();
+
+        final float height = cell.getHeight() > rowHeight ? cell.getHeight() : rowHeight;
+        final float sY = cell.getHeight() > rowHeight ? start.y + rowHeight - cell.getHeight() : start.y;
+
+        // Handle the cell's borders
+        final Color cellBorderColor = cell.getBorderColor();
+        final Color rowBorderColor = row.getSettings().getBorderColor();
+
+        if (cell.hasBorderTop() || cell.hasBorderBottom()) {
+            final float correctionLeft = cell.getBorderWidthLeft() / 2;
+            final float correctionRight = cell.getBorderWidthRight() / 2;
+
+            if (cell.hasBorderTop()) {
+                contentStream.moveTo(start.x - correctionLeft, start.y + rowHeight);
+                drawLine(cellBorderColor, cell.getBorderWidthTop(), start.x + cellWidth + correctionRight, start.y + rowHeight);
+                contentStream.setStrokingColor(rowBorderColor);
+            }
+
+            if (cell.hasBorderBottom()) {
+                contentStream.moveTo(start.x - correctionLeft, sY);
+                drawLine(cellBorderColor, cell.getBorderWidthBottom(), start.x + cellWidth + correctionRight, sY);
+                contentStream.setStrokingColor(rowBorderColor);
+            }
+        }
+
+        if (cell.hasBorderLeft() || cell.hasBorderRight()) {
+            final float correctionTop = cell.getBorderWidthTop() / 2;
+            final float correctionBottom = cell.getBorderWidthBottom() / 2;
+
+            if (cell.hasBorderLeft()) {
+                contentStream.moveTo(start.x, sY - correctionBottom);
+                drawLine(cellBorderColor, cell.getBorderWidthLeft(), start.x, sY + height + correctionTop);
+                contentStream.setStrokingColor(rowBorderColor);
+            }
+
+            if (cell.hasBorderRight()) {
+                contentStream.moveTo(start.x + cellWidth, sY - correctionBottom);
+                drawLine(cellBorderColor, cell.getBorderWidthRight(), start.x + cellWidth, sY + height + correctionTop);
+                contentStream.setStrokingColor(rowBorderColor);
             }
         }
     }
 
-    private void drawBorders(float initialX, float initialY) throws IOException {
-        float startX;
-        float startY = initialY;
-
-        for (int i = rowToDraw; i < table.getRows().size(); i++) {
-            final Row row = table.getRows().get(i);
-            final float rowHeight = row.getHeight();
-            int columnCounter = 0;
-
-            startX = initialX;
-            startY -= rowHeight;
-
-            if (startY < endY) {
-                rowToDraw = i;
-                return;
-            }
-
-            for (final CellBaseData cell : row.getCells()) {
-                float cellWidth = table.getAvailableCellWidthRespectingSpan(columnCounter, cell.getSpan());
-
-                // Handle the cell's borders
-                final Color cellBorderColor = cell.getBorderColor();
-                final Color rowBorderColor = row.getSettings().getBorderColor();
-
-                if (cell.hasBorderTop() || cell.hasBorderBottom()) {
-                    final float correctionLeft = cell.getBorderWidthLeft() / 2;
-                    final float correctionRight = cell.getBorderWidthRight() / 2;
-
-                    if (cell.hasBorderTop()) {
-                        contentStream.moveTo(startX - correctionLeft, startY + rowHeight);
-                        drawLine(cellBorderColor, cell.getBorderWidthTop(), startX + cellWidth + correctionRight, startY + rowHeight);
-                        contentStream.setStrokingColor(rowBorderColor);
-                    }
-
-                    if (cell.hasBorderBottom()) {
-                        contentStream.moveTo(startX - correctionLeft, startY);
-                        drawLine(cellBorderColor, cell.getBorderWidthBottom(), startX + cellWidth + correctionRight, startY);
-                        contentStream.setStrokingColor(rowBorderColor);
-                    }
-                }
-
-                if (cell.hasBorderLeft() || cell.hasBorderRight()) {
-                    final float correctionTop = cell.getBorderWidthTop() / 2;
-                    final float correctionBottom = cell.getBorderWidthBottom() / 2;
-
-                    if (cell.hasBorderLeft()) {
-                        contentStream.moveTo(startX, startY - correctionBottom);
-                        drawLine(cellBorderColor, cell.getBorderWidthLeft(), startX, startY + rowHeight + correctionTop);
-                        contentStream.setStrokingColor(rowBorderColor);
-                    }
-
-                    if (cell.hasBorderRight()) {
-                        contentStream.moveTo(startX + cellWidth, startY - correctionBottom);
-                        drawLine(cellBorderColor, cell.getBorderWidthRight(), startX + cellWidth, startY + rowHeight + correctionTop);
-                        contentStream.setStrokingColor(rowBorderColor);
-                    }
-                }
-
-                startX += cellWidth;
-                columnCounter += cell.getSpan();
-            }
-        }
-
-        this.isFinished = true;
-    }
-
-    private void drawCellText(final CellText cell, final float columnWidth, final float moveX, final float moveY) throws IOException {
+    private void drawCellText(final CellText cell, final float columnWidth, final float moveX, float moveY) throws IOException {
         final PDFont currentFont = cell.getFont();
         final int currentFontSize = cell.getFontSize();
         final Color currentTextColor = cell.getTextColor();
 
-        final List<String> lines;
-
         float maxWidth = cell.getWidthOfText();
-        if (cell.isWordBreak()) {
-            lines = PdfUtil.getOptimalTextBreakLines(cell.getText(), currentFont, currentFontSize, maxWidth);
-        } else {
-            lines = Collections.singletonList(cell.getText());
-        }
+
+        final List<String> lines = cell.isWordBreak()
+                ? PdfUtil.getOptimalTextBreakLines(cell.getText(), currentFont, currentFontSize, maxWidth)
+                : Collections.singletonList(cell.getText());
 
         // Vertical alignment
         float yStartRelative = cell.getRow().getHeight() - cell.getPaddingTop(); // top position
-        if (cell.getRow().getHeight() > cell.getHeight()) {
+        if (cell.getRow().getHeight() > cell.getHeight() || cell.getRowSpan() > 1) {
+
             if (cell.getSettings().getVerticalAlignment() == VerticalAlignment.MIDDLE) {
-                yStartRelative = cell.getRow().getHeight() / 2 + (cell.getHeight() - cell.getPaddingBottom() - cell.getPaddingTop()) / 2;
+
+                float outerHeight = cell.getRowSpan() > 1 ? cell.getHeight() : cell.getRow().getHeight();
+                yStartRelative = outerHeight / 2 + cell.getTextHeight() / 2;
+
+                if (cell.getRowSpan() > 1) {
+                    float rowSpanAdaption = cell.calculateHeightForRowSpan() - cell.getRow().getHeight();
+                    yStartRelative -= rowSpanAdaption;
+                }
+
             } else if (cell.getSettings().getVerticalAlignment() == VerticalAlignment.BOTTOM) {
-                yStartRelative = cell.getHeight() - cell.getPaddingTop();
+
+                yStartRelative = cell.getTextHeight() + cell.getPaddingBottom();
+
+                if (cell.getRowSpan() > 1) {
+                    float rowSpanAdaption = cell.calculateHeightForRowSpan() - cell.getRow().getHeight();
+                    yStartRelative -= rowSpanAdaption;
+                }
             }
         }
 
@@ -240,12 +252,12 @@ public class TableDrawer {
         final Point2D.Float drawAt = new Point2D.Float();
 
         drawAt.x = moveX
-                + ((columnWidth - cell.getPaddingLeft() - cell.getPaddingRight()) / 2f) //middle of cell
+                + ((columnWidth - cell.getHorizontalPadding()) / 2f) //middle of cell
                 + cell.getPaddingLeft()
                 - (size.x / 2f);
 
         drawAt.y = moveY
-                + ((cell.getHeight() - cell.getPaddingTop() - cell.getPaddingBottom()) / 2f) // middle of cell
+                + ((cell.getHeight() - cell.getVerticalPadding()) / 2f) // middle of cell
                 + cell.getPaddingBottom()
                 - (size.y / 2f);
 
